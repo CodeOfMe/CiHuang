@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from cihuang.gui import MainWindow  # noqa: E402
 
 SAMPLES = Path(__file__).resolve().parent.parent / "examples" / "sample.svg"
+FIGURE = Path(__file__).resolve().parent.parent / "examples" / "figure.svg"
 
 
 @pytest.fixture(scope="module")
@@ -94,8 +95,8 @@ class TestGuiSmoke:
         window.canvas.doc.group([1, 2])
         window.canvas.rebuild()
         window.select_all()
-        # 1 rect + 1 group + 1 path + 1 text = 4 top-level objects.
-        assert len(window.canvas.selection) == 4
+        # frame is a backdrop and is skipped: 1 group + 1 path + 1 text = 3.
+        assert len(window.canvas.selection) == 3
 
     def test_additive_selection_toggles(self, window):
         canvas = window.canvas
@@ -104,3 +105,32 @@ class TestGuiSmoke:
         assert set(canvas.selection) == {1, 2}
         canvas.select(1, additive=True)
         assert canvas.selection == [2]
+
+    def test_click_on_backdrop_is_ignored(self, window):
+        canvas = window.canvas
+        # The frame rect covers almost the whole viewBox, so it is a backdrop.
+        assert canvas.is_background(0) is True
+        assert canvas.element_at(canvas._user_to_scene(10, 20)) == 0
+        # A click there should read as empty space, not select the backdrop...
+        assert canvas.pick_uid(canvas._user_to_scene(10, 20)) == -1
+        # ...while a real shape still selects.
+        assert canvas.pick_uid(canvas._user_to_scene(45, 50)) == 1
+
+    def test_background_can_be_selected_from_list(self, window):
+        # Deliberate selection from the element list still works.
+        window.canvas.set_selection([0])
+        assert window.canvas.selection == [0]
+
+    def test_zoom_is_clamped(self, window):
+        canvas = window.canvas
+        canvas.fit()
+        fit_scale = canvas._fit_scale
+        # Many zoom-out notches must not shrink the drawing into nothing.
+        for _ in range(80):
+            canvas.apply_zoom(-1)
+        assert canvas.transform().m11() >= fit_scale * 0.24
+
+    def test_smart_group_makes_groups(self, window):
+        window.load(str(FIGURE))
+        made = window.canvas.smart_group()
+        assert made >= 1

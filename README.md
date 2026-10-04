@@ -17,6 +17,10 @@ Click any single element of an SVG and move it, repaint it, reshape it, or rewri
   several shapes (for example a figure and its caption), then move them together.
 - **Group / ungroup** -- `Ctrl+G` wraps the selection in a `<g>` (clicking then picks
   the whole group, like Inkscape); `Ctrl+Shift+G` dissolves it.
+- **Smart Group** -- `Ctrl+Alt+G` clusters objects that sit close together (a figure
+  and its caption, say) and groups them automatically.
+- **No accidental backdrop grab** -- a click on a full-canvas background reads as a
+  click on empty space; select the backdrop from the element list when you mean to.
 - **Drag to move** -- the move is written as a `translate(...)` on that element only.
 - **Repaint** -- set `fill` and `stroke` with a color picker, or clear them to `none`.
 - **Reshape** -- an editable table exposes every raw attribute (`cx`, `r`, `d`, `points`,
@@ -84,9 +88,10 @@ cihuang-gui drawing.svg
 ```
 
 Left mouse button selects and drags. Drag on empty space to marquee-select; hold
-Shift to add to the selection. Middle button pans, the wheel zooms, `Ctrl+G` groups
-the selection and `Ctrl+Shift+G` ungroups it. The right dock edits fill, stroke, text
-and raw attributes; the left dock lists every element.
+Shift to add to the selection. Middle button pans; the wheel zooms gently and is
+limited so the drawing cannot shrink away. `Ctrl+G` groups the selection,
+`Ctrl+Shift+G` ungroups it and `Ctrl+Alt+G` smart-groups nearby objects. The right
+dock edits fill, stroke, text and raw attributes; the left dock lists every element.
 
 ### CLI
 

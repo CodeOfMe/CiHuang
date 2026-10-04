@@ -55,9 +55,13 @@ try:
 except ImportError:  # pragma: no cover - exercised only without PySide6
     PYSIDE_AVAILABLE = False
 
-from .core import SvgDocument, collect_drawables, format_number
+from .core import SvgDocument, cluster_boxes, collect_drawables, format_number
 
 HIT_SCALE = 900  # cap (px) for the raster used in pixel hit-testing
+ZOOM_STEP = 1.08  # per wheel notch; gentle so the drawing is easy to keep in view
+ZOOM_OUT_LIMIT = 0.25  # cannot zoom out past 25% of the fitted size
+ZOOM_IN_LIMIT = 40.0  # cannot zoom in past 40x the fitted size
+SMART_GROUP_GAP = 0.06  # cluster gap as a fraction of the viewBox diagonal
 
 
 class SvgCanvas(QGraphicsView):
@@ -71,6 +75,8 @@ class SvgCanvas(QGraphicsView):
         self.doc: SvgDocument | None = None
         self.selection: list[int] = []
         self.select_whole_group = True
+        self.ignore_background = True
+        self._fit_scale = 1.0
 
         self._renderer = QSvgRenderer()
         self._scene = QGraphicsScene(self)
@@ -180,6 +186,22 @@ class SvgCanvas(QGraphicsView):
             return
         self.resetTransform()
         self.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
+        self._fit_scale = self.transform().m11() or 1.0
+
+    def is_background(self, uid: int) -> bool:
+        """True for a full-canvas backdrop (a rect covering ~the whole viewBox).
+
+        Such elements are not picked by a click or a marquee, so a stray click
+        on empty space does not grab the backdrop; use the element list to
+        select it deliberately.
+        """
+        if uid < 0 or self.doc is None:
+            return False
+        rect = self.bounds_scene(uid)
+        vb = self._vb_rect
+        if rect.isNull() or vb.width() <= 0 or vb.height() <= 0:
+            return False
+        return rect.width() >= 0.9 * vb.width() and rect.height() >= 0.9 * vb.height()
 
     # ------------------------------------------------------------ coordinates
     def _user_to_scene(self, ux: float, uy: float) -> QPointF:
@@ -246,11 +268,19 @@ class SvgCanvas(QGraphicsView):
         return candidates[-1] if candidates else -1
 
     def pick_uid(self, scene_pos: QPointF, leaf: bool = False) -> int:
-        """Map a click to a top-level group (default) or the leaf element."""
+        """Map a click to a top-level group (default) or the leaf element.
+
+        Returns -1 when the click lands on a backdrop and background-ignoring is
+        on, so the caller treats it as a click on empty space.
+        """
         uid = self.element_at(scene_pos)
-        if uid < 0 or leaf or not self.select_whole_group:
-            return uid
-        return self.doc.top_level_uid(uid)
+        if uid < 0:
+            return -1
+        if not leaf and self.select_whole_group:
+            uid = self.doc.top_level_uid(uid)
+        if self.ignore_background and self.is_background(uid):
+            return -1
+        return uid
 
     # -------------------------------------------------------------- selection
     def set_selection(self, uids: list[int]) -> None:
@@ -376,8 +406,14 @@ class SvgCanvas(QGraphicsView):
                 self._marquee_origin = None
                 chosen = set(self.selection) if event.modifiers() & Qt.ShiftModifier else set()
                 for uid in range(self.doc.count() if self.doc else 0):
-                    if self.bounds_scene(uid).intersects(rect):
-                        chosen.add(self.doc.top_level_uid(uid) if self.select_whole_group else uid)
+                    if not self.bounds_scene(uid).intersects(rect):
+                        continue
+                    target = (
+                        self.doc.top_level_uid(uid) if self.select_whole_group else uid
+                    )
+                    if self.ignore_background and self.is_background(target):
+                        continue
+                    chosen.add(target)
                 self.set_selection(sorted(chosen))
             if self._dragging:
                 self._dragging = False
@@ -387,9 +423,71 @@ class SvgCanvas(QGraphicsView):
                 self.documentChanged.emit()
         super().mouseReleaseEvent(event)
 
+    def apply_zoom(self, direction: int) -> None:
+        """Zoom one clamped notch. ``direction`` > 0 zooms in, < 0 zooms out."""
+        if self.doc is None or direction == 0:
+            return
+        current = self.transform().m11() or 1.0
+        step = ZOOM_STEP if direction > 0 else 1 / ZOOM_STEP
+        target = current * step
+        low = self._fit_scale * ZOOM_OUT_LIMIT
+        high = self._fit_scale * ZOOM_IN_LIMIT
+        if target < low:
+            step = low / current
+        elif target > high:
+            step = high / current
+        if step != 1.0:
+            self.scale(step, step)
+
     def wheelEvent(self, event) -> None:  # noqa: N802
-        factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-        self.scale(factor, factor)
+        if self.doc is None:
+            event.ignore()
+            return
+        self.apply_zoom(1 if event.angleDelta().y() > 0 else -1)
+
+    def top_level_uids(self, skip_background: bool = False) -> list[int]:
+        """Indices of the top-level objects, optionally excluding the backdrop."""
+        if self.doc is None:
+            return []
+        found = {self.doc.top_level_uid(uid) for uid in range(self.doc.count())}
+        return [
+            uid
+            for uid in sorted(found)
+            if not (skip_background and self.is_background(uid))
+        ]
+
+    def smart_group(self, gap_ratio: float = SMART_GROUP_GAP) -> int:
+        """Group visible objects that sit close together; return groups made.
+
+        This is the "figure plus its caption" case: objects whose bounding boxes
+        are within a small gap of each other are clustered and wrapped in a
+        ``<g>``.  Backdrops are ignored.
+        """
+        if self.doc is None:
+            return 0
+        uids = self.top_level_uids(skip_background=self.ignore_background)
+        boxes = []
+        elements = {}
+        for uid in uids:
+            rect = self.bounds_scene(uid)
+            if rect.isNull():
+                continue
+            boxes.append((uid, (rect.x(), rect.y(), rect.width(), rect.height())))
+            elements[uid] = self.doc.element(uid)
+        if len(boxes) < 2:
+            return 0
+        diagonal = (self._vb_rect.width() ** 2 + self._vb_rect.height() ** 2) ** 0.5
+        components = cluster_boxes(boxes, gap_ratio * diagonal)
+        made = 0
+        for component in components:
+            if len(component) < 2:
+                continue
+            try:
+                self.doc.group_elements([elements[uid] for uid in component])
+                made += 1
+            except ValueError:
+                continue
+        return made
 
 
 class MainWindow(QMainWindow):
@@ -451,6 +549,11 @@ class MainWindow(QMainWindow):
         self.act_ungroup.setShortcut("Ctrl+Shift+G")
         self.act_ungroup.triggered.connect(self.ungroup_selected)
 
+        self.act_smart_group = QAction("Smart Group", self)
+        self.act_smart_group.setShortcut("Ctrl+Alt+G")
+        self.act_smart_group.setToolTip("Group objects that sit close together")
+        self.act_smart_group.triggered.connect(self.smart_group)
+
         self.act_select_all = QAction("Select All", self)
         self.act_select_all.setShortcut("Ctrl+A")
         self.act_select_all.triggered.connect(self.select_all)
@@ -463,6 +566,14 @@ class MainWindow(QMainWindow):
         self.act_whole_group.setChecked(True)
         self.act_whole_group.toggled.connect(
             lambda checked: setattr(self.canvas, "select_whole_group", checked)
+        )
+
+        self.act_ignore_bg = QAction("Ignore background", self)
+        self.act_ignore_bg.setCheckable(True)
+        self.act_ignore_bg.setChecked(True)
+        self.act_ignore_bg.setToolTip("Do not pick the full-canvas backdrop on click or marquee")
+        self.act_ignore_bg.toggled.connect(
+            lambda checked: setattr(self.canvas, "ignore_background", checked)
         )
 
     def _build_toolbar(self) -> None:
@@ -483,9 +594,11 @@ class MainWindow(QMainWindow):
             None,
             self.act_group,
             self.act_ungroup,
+            self.act_smart_group,
             None,
             self.act_fit,
             self.act_whole_group,
+            self.act_ignore_bg,
         ):
             if action is None:
                 bar.addSeparator()
@@ -619,12 +732,14 @@ class MainWindow(QMainWindow):
         if self.canvas.doc is None:
             return
         if self.canvas.select_whole_group:
-            uids = {
-                self.canvas.doc.top_level_uid(uid) for uid in range(self.canvas.doc.count())
-            }
-            self.canvas.set_selection(sorted(uids))
+            uids = self.canvas.top_level_uids(skip_background=self.canvas.ignore_background)
         else:
-            self.canvas.set_selection(list(range(self.canvas.doc.count())))
+            uids = [
+                uid
+                for uid in range(self.canvas.doc.count())
+                if not (self.canvas.ignore_background and self.canvas.is_background(uid))
+            ]
+        self.canvas.set_selection(uids)
 
     def delete_selected(self) -> None:
         if self.canvas.doc is None or not self.canvas.selection:
@@ -665,6 +780,20 @@ class MainWindow(QMainWindow):
         self.canvas.rebuild()
         self.canvas.set_selection([new_uid])
         self._refresh_lists()
+
+    def smart_group(self) -> None:
+        """Group nearby objects automatically (see :meth:`SvgCanvas.smart_group`)."""
+        if self.canvas.doc is None:
+            return
+        self._push_undo()
+        made = self.canvas.smart_group()
+        self.canvas.rebuild()
+        self.canvas.set_selection([])
+        self._refresh_lists()
+        if made:
+            self.statusBar().showMessage(f"Smart group: created {made} group(s)")
+        else:
+            self.statusBar().showMessage("Smart group: nothing close enough to group")
 
     def ungroup_selected(self) -> None:
         if self.canvas.doc is None or not self.canvas.selection:

@@ -2,6 +2,18 @@
 
 All notable changes to CiHuang are documented here.
 
+## [0.2.1] - 2026-10-04
+
+- A click or marquee no longer picks the full-canvas backdrop, so clicking empty
+  space deselects instead of grabbing the background. A backdrop can still be
+  selected from the element list, and the behaviour is a toggle ("Ignore background").
+- Added `Smart Group` (`Ctrl+Alt+G`): objects whose bounding boxes sit close together
+  are clustered (union-find) and wrapped in a `<g>`, which handles the common
+  "figure plus its caption" case. Backdrops are excluded.
+- Gentler wheel zoom (1.08 per notch, down from 1.15) and limits so you can neither
+  zoom the drawing away to nothing (min 25% of the fitted size) nor lose it at the
+  other extreme (max 40x).
+
 ## [0.2.0] - 2026-10-04
 
 Performance and multi-selection release.

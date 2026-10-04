@@ -20,6 +20,7 @@ from cihuang import (
     cihuang_set_text,
 )
 from cihuang.api import ToolResult as ApiToolResult
+from cihuang.core import cluster_boxes
 from cihuang.tools import TOOLS, dispatch, list_tool_names
 
 SAMPLES = Path(__file__).resolve().parent.parent / "examples"
@@ -138,6 +139,32 @@ class TestCoreTypes:
         doc = SvgDocument.load(SAMPLES / "sample.svg")
         with pytest.raises(ValueError):
             doc.ungroup(1)
+
+
+class TestClusterBoxes:
+    def test_close_boxes_join(self):
+        items = [("a", (0, 0, 10, 10)), ("b", (12, 0, 10, 10)), ("c", (100, 100, 10, 10))]
+        components = cluster_boxes(items, gap=5)
+        sets = {frozenset(comp) for comp in components}
+        assert frozenset({"a", "b"}) in sets
+        assert frozenset({"c"}) in sets
+
+    def test_far_boxes_stay_apart(self):
+        items = [("a", (0, 0, 10, 10)), ("b", (50, 0, 10, 10))]
+        components = cluster_boxes(items, gap=5)
+        assert sorted(map(len, components)) == [1, 1]
+
+    def test_overlapping_boxes_join(self):
+        items = [("a", (0, 0, 20, 20)), ("b", (10, 10, 20, 20))]
+        components = cluster_boxes(items, gap=0.0)
+        assert len(components) == 1
+
+    def test_chains_merge(self):
+        # a-b and b-c are each within the gap, so all three end up together.
+        items = [("a", (0, 0, 10, 10)), ("b", (14, 0, 10, 10)), ("c", (28, 0, 10, 10))]
+        components = cluster_boxes(items, gap=5)
+        assert len(components) == 1
+        assert set(components[0]) == {"a", "b", "c"}
 
 
 class TestApi:

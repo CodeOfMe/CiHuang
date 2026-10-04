@@ -393,10 +393,17 @@ class SvgDocument:
         unchanged by the regroup.  The group is inserted where the
         earliest-in-document-order member was, preserving visual stacking.
         """
-        unique = list(dict.fromkeys(uids))
-        if not unique:
+        return self.group_elements([self.element(uid) for uid in dict.fromkeys(uids)])
+
+    def group_elements(self, elems: Iterable[ET.Element]) -> int:
+        """Same as :meth:`group` but takes element objects (identity-based).
+
+        Smart grouping builds its clusters from live element references, which
+        stay valid while earlier clusters are wrapped, so it uses this form.
+        """
+        elems = list(elems)
+        if not elems:
             raise ValueError("no elements selected")
-        elems = [self.element(uid) for uid in unique]
         parents = [self._find_parent(elem) for elem in elems]
         if any(parent is None for parent in parents):
             raise ValueError("cannot group the root")
@@ -521,6 +528,51 @@ class SvgDocument:
                 }
             )
         return infos
+
+
+def cluster_boxes(
+    items: Iterable[tuple[object, tuple[float, float, float, float]]],
+    gap: float,
+) -> list[list[object]]:
+    """Group rectangles that are within ``gap`` of each other (union-find).
+
+    ``items`` is an iterable of ``(key, (x, y, w, h))``.  Two rectangles are
+    joined when the first grown by ``gap`` on every side overlaps the second.
+    Returns the connected components as lists of keys; used by the GUI's smart
+    grouping, kept here (Qt-free) so it can be tested directly.
+    """
+    entries = list(items)
+    count = len(entries)
+    parent = list(range(count))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        root_i, root_j = find(i), find(j)
+        if root_i != root_j:
+            parent[root_i] = root_j
+
+    for i in range(count):
+        xi, yi, wi, hi = entries[i][1]
+        for j in range(i + 1, count):
+            xj, yj, wj, hj = entries[j][1]
+            close = (
+                xi - gap < xj + wj
+                and xj - gap < xi + wi
+                and yi - gap < yj + hj
+                and yj - gap < yi + hi
+            )
+            if close:
+                union(i, j)
+
+    components: dict[int, list[object]] = {}
+    for i in range(count):
+        components.setdefault(find(i), []).append(entries[i][0])
+    return list(components.values())
 
 
 def parse_color(value: str) -> tuple[int, int, int] | None:
