@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -354,6 +355,87 @@ class SvgDocument:
         parent.remove(elem)
         self._rescan()
         self._dirty = True
+
+    def parent_of(self, uid: int) -> ET.Element | None:
+        return self._find_parent(self.element(uid))
+
+    def _parent_map(self) -> dict[int, ET.Element]:
+        mapping: dict[int, ET.Element] = {}
+        assert self.root is not None
+        for parent in self.root.iter():
+            for child in parent:
+                mapping[id(child)] = parent
+        return mapping
+
+    def top_level_uid(self, uid: int) -> int:
+        """Index of the outermost group containing ``uid`` (or ``uid`` itself).
+
+        This is what a single click selects in editors such as Inkscape: the
+        whole group, not the leaf inside it.
+        """
+        elem = self.element(uid)
+        mapping = self._parent_map()
+        best = elem
+        node = elem
+        while True:
+            parent = mapping.get(id(node))
+            if parent is None:
+                break
+            if local_name(parent.tag) in _GROUP_TAGS and parent in self._drawables:
+                best = parent
+            node = parent
+        return self._drawables.index(best)
+
+    def group(self, uids: Iterable[int]) -> int:
+        """Wrap several sibling elements in a new ``<g>``; return its index.
+
+        All elements must share one parent so their coordinate space is
+        unchanged by the regroup.  The group is inserted where the
+        earliest-in-document-order member was, preserving visual stacking.
+        """
+        unique = list(dict.fromkeys(uids))
+        if not unique:
+            raise ValueError("no elements selected")
+        elems = [self.element(uid) for uid in unique]
+        parents = [self._find_parent(elem) for elem in elems]
+        if any(parent is None for parent in parents):
+            raise ValueError("cannot group the root")
+        if len({id(parent) for parent in parents}) != 1:
+            raise ValueError("elements must share the same parent to be grouped")
+        parent = parents[0]
+        order = {id(child): i for i, child in enumerate(parent)}
+        elems.sort(key=lambda elem: order[id(elem)])
+        insert_at = order[id(elems[0])]
+        group_elem = ET.Element(f"{{{SVG_NS}}}g")
+        for elem in elems:
+            parent.remove(elem)
+            group_elem.append(elem)
+        parent.insert(insert_at, group_elem)
+        self._rescan()
+        self._dirty = True
+        return self._drawables.index(group_elem)
+
+    def ungroup(self, uid: int) -> None:
+        """Replace a group with its children, keeping their order and place."""
+        elem = self.element(uid)
+        if local_name(elem.tag) not in _GROUP_TAGS:
+            raise ValueError("selected element is not a group")
+        parent = self._find_parent(elem)
+        if parent is None:
+            raise ValueError("cannot ungroup the root")
+        index = list(parent).index(elem)
+        children = list(elem)
+        for child in children:
+            elem.remove(child)
+        parent.remove(elem)
+        for offset, child in enumerate(children):
+            parent.insert(index + offset, child)
+        self._rescan()
+        self._dirty = True
+
+    def is_grouped(self, uid: int) -> bool:
+        """True when the element sits inside at least one group."""
+        return self.top_level_uid(uid) != uid
 
     def _find_parent(self, target: ET.Element) -> ET.Element | None:
         assert self.root is not None

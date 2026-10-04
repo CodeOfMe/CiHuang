@@ -104,6 +104,41 @@ class TestCoreTypes:
         assert doc.count() == 4
         assert doc.tag(0) == "circle"
 
+    def test_group_then_ungroup(self):
+        doc = SvgDocument.load(SAMPLES / "sample.svg")
+        before = doc.count()
+        group_uid = doc.group([1, 2])  # circle and bar, both top level
+        # A new <g> appears and stays editable alongside its children.
+        assert doc.tag(group_uid) == "g"
+        assert doc.count() == before + 1
+        doc.ungroup(group_uid)
+        assert doc.count() == before
+
+    def test_group_requires_common_parent(self):
+        doc = SvgDocument.load(SAMPLES / "sample.svg")
+        group_uid = doc.group([1, 2])
+        # uid+1 is a child of the new group; it lives in a different parent.
+        with pytest.raises(ValueError):
+            doc.group([group_uid, group_uid + 1])
+
+    def test_group_moves_together(self):
+        doc = SvgDocument.load(SAMPLES / "sample.svg")
+        group_uid = doc.group([1, 2])
+        doc.translate(group_uid, 10, 0)
+        assert "translate(10 0)" in (doc.element(group_uid).get("transform") or "")
+
+    def test_top_level_uid_finds_group(self):
+        doc = SvgDocument.load(SAMPLES / "sample.svg")
+        group_uid = doc.group([1, 2])
+        # The children now sit inside the group; a click should resolve to it.
+        child = next(uid for uid in range(doc.count()) if doc.tag(uid) != "g" and uid != 0)
+        assert doc.top_level_uid(child) == group_uid
+
+    def test_ungroup_rejects_non_group(self):
+        doc = SvgDocument.load(SAMPLES / "sample.svg")
+        with pytest.raises(ValueError):
+            doc.ungroup(1)
+
 
 class TestApi:
     def test_inspect_success(self, sample: Path):

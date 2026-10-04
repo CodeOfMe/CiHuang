@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 240" width="320" height="240">
+  <text id="cap1" x="55" y="34" font-size="18" fill="#333">图 1 数据对比</text>
+  <rect id="chart" x="40" y="52" width="110" height="70" rx="6" fill="#4a90d9" stroke="#2c6fbb" stroke-width="2"/>
+  <path id="axis" d="M40 128 L170 128" stroke="#555" stroke-width="2" fill="none"/>
+  <text id="cap2" x="205" y="88" font-size="18" fill="#333">图 2 流程</text>
+  <circle id="node" cx="255" cy="120" r="26" fill="#3f8f52"/>
+  <rect id="foot" x="40" y="200" width="240" height="24" rx="4" fill="#eef2f7"/>
+</svg>

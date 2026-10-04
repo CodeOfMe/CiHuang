@@ -78,3 +78,29 @@ class TestGuiSmoke:
             for row in range(window.attr_table.rowCount())
         ]
         assert {"id", "cx", "cy", "r", "fill"} <= set(names)
+
+    def test_multi_select_and_group(self, window):
+        canvas = window.canvas
+        canvas.set_selection([1, 2])
+        assert canvas.get_selection() == -1  # not a single selection
+        window.group_selected()
+        assert canvas.doc.count() == 6  # 5 elements + the new group
+        assert len(canvas.selection) == 1
+        assert canvas.doc.tag(canvas.selection[0]) == "g"
+        window.ungroup_selected()
+        assert canvas.doc.count() == 5
+
+    def test_select_all_collapses_groups(self, window):
+        window.canvas.doc.group([1, 2])
+        window.canvas.rebuild()
+        window.select_all()
+        # 1 rect + 1 group + 1 path + 1 text = 4 top-level objects.
+        assert len(window.canvas.selection) == 4
+
+    def test_additive_selection_toggles(self, window):
+        canvas = window.canvas
+        canvas.select(1)
+        canvas.select(2, additive=True)
+        assert set(canvas.selection) == {1, 2}
+        canvas.select(1, additive=True)
+        assert canvas.selection == [2]

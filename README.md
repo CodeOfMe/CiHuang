@@ -13,6 +13,10 @@ Click any single element of an SVG and move it, repaint it, reshape it, or rewri
 - **Open any SVG** -- a real SVG file is parsed as XML, not flattened to an image.
 - **Click to select one element** -- hit-testing walks the elements in reverse paint
   order and tests actual pixels, so you select the shape you see, not its bounding box.
+- **Select a group of things** -- Shift-click to add, or drag a marquee box around
+  several shapes (for example a figure and its caption), then move them together.
+- **Group / ungroup** -- `Ctrl+G` wraps the selection in a `<g>` (clicking then picks
+  the whole group, like Inkscape); `Ctrl+Shift+G` dissolves it.
 - **Drag to move** -- the move is written as a `translate(...)` on that element only.
 - **Repaint** -- set `fill` and `stroke` with a color picker, or clear them to `none`.
 - **Reshape** -- an editable table exposes every raw attribute (`cx`, `r`, `d`, `points`,
@@ -26,11 +30,12 @@ Click any single element of an SVG and move it, repaint it, reshape it, or rewri
 
 Worth knowing before you rely on it:
 
-- Hit-testing renders each candidate to a raster capped at 1600 px, so a few clicks on
-  a very large document can feel slow the first time; results are cached afterwards.
+- Hit-testing renders each candidate to a raster capped at 900 px; only elements whose
+  bounding box contains the click are rasterised, so it stays quick on large files.
 - Editing `<text>` replaces any `<tspan>` children with a single text run.
-- The tool edits elements in place. It does not re-parent, re-order or group elements,
-  and it does not touch `viewBox`, stylesheets inside `<style>`, or animations.
+- Grouping requires the selected elements to share the same parent; the tool does not
+  re-order elements across groups.
+- It does not touch `viewBox`, stylesheets inside `<style>`, or animations.
 - `<image>` and `<use>` can be moved and recolored but their referenced content is not
   edited.
 - It is an annotator, not a full vector editor: no bezier-point editing, no snapping.
@@ -78,9 +83,10 @@ cihuang gui drawing.svg
 cihuang-gui drawing.svg
 ```
 
-Left mouse button selects and drags an element. Middle mouse button pans. The mouse
-wheel zooms. The right dock edits fill, stroke, text and raw attributes; the left dock
-lists every element.
+Left mouse button selects and drags. Drag on empty space to marquee-select; hold
+Shift to add to the selection. Middle button pans, the wheel zooms, `Ctrl+G` groups
+the selection and `Ctrl+Shift+G` ungroups it. The right dock edits fill, stroke, text
+and raw attributes; the left dock lists every element.
 
 ### CLI
 
