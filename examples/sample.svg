@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 140" width="200" height="140">
+  <rect id="frame" x="4" y="4" width="192" height="132" fill="#eef2f7" stroke="#8a97a3" stroke-width="2"/>
+  <circle id="dot" cx="45" cy="50" r="24" fill="#2c6fbb"/>
+  <rect id="bar" x="90" y="30" width="34" height="70" rx="6" fill="#e0a24a"/>
+  <path id="wave" d="M20 115 C 60 85, 120 145, 180 110" fill="none" stroke="#3f8f52" stroke-width="4"/>
+  <text id="caption" x="100" y="24" font-size="16" text-anchor="middle" fill="#333">CiHuang sample</text>
+</svg>

@@ -1,0 +1,98 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cihuang"
+dynamic = ["version"]
+description = "A PySide6 SVG editor: open an SVG, click any element to drag it, recolor it, edit its shape attributes or its text"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+authors = [
+    { name = "CodeOfMe", email = "wedonotuse@outlook.com" }
+]
+keywords = [
+    "svg",
+    "editor",
+    "pyside6",
+    "qt",
+    "vector-graphics",
+    "graphics",
+    "drag-and-drop",
+    "recolor",
+    "annotation",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Multimedia :: Graphics :: Editors :: Vector-Based",
+    "Topic :: Utilities",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "build>=1.0.0",
+    "twine>=4.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+cihuang = "cihuang.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/CodeOfMe/CiHuang"
+Documentation = "https://github.com/CodeOfMe/CiHuang#readme"
+Repository = "https://github.com/CodeOfMe/CiHuang.git"
+Issues = "https://github.com/CodeOfMe/CiHuang/issues"
+Changelog = "https://github.com/CodeOfMe/CiHuang/blob/main/CHANGELOG.md"
+
+[project.gui-scripts]
+cihuang-gui = "cihuang.gui:main"
+
+[tool.hatch.version]
+path = "src/cihuang/__version__.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/README.md",
+    "/README_CN.md",
+    "/LICENSE",
+    "/examples",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cihuang"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Qt signals are camelCase by convention.
+"src/cihuang/gui.py" = ["N815"]
