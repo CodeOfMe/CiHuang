@@ -2,6 +2,19 @@
 
 All notable changes to CiHuang are documented here.
 
+## [0.2.2] - 2026-10-04
+
+Drawing tools, in the spirit of yEd.
+
+- Toolbar with Select, Rect, Ellipse, Line, Arrow, Text and Connect tools. Pick a
+  shape and drag on the canvas to draw it; a plain click drops a default-sized one.
+- The Text tool places a `<text>` element you then edit in the Properties panel.
+- A `cihuang-arrow` marker is written into `<defs>` the first time you draw an arrow.
+- Connectors: with the Connect tool, drag from one shape to another to draw an arrow
+  between them. The edge remembers its endpoints (`data-edge-from` / `data-edge-to`)
+  and re-routes automatically whenever you move a connected shape.
+- `Esc` returns to the Select tool.
+
 ## [0.2.1] - 2026-10-04
 
 - A click or marquee no longer picks the full-canvas backdrop, so clicking empty

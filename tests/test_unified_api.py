@@ -20,7 +20,7 @@ from cihuang import (
     cihuang_set_text,
 )
 from cihuang.api import ToolResult as ApiToolResult
-from cihuang.core import cluster_boxes
+from cihuang.core import cluster_boxes, local_name
 from cihuang.tools import TOOLS, dispatch, list_tool_names
 
 SAMPLES = Path(__file__).resolve().parent.parent / "examples"
@@ -139,6 +139,48 @@ class TestCoreTypes:
         doc = SvgDocument.load(SAMPLES / "sample.svg")
         with pytest.raises(ValueError):
             doc.ungroup(1)
+
+
+class TestAuthoring:
+    def test_add_element_appends_on_top(self):
+        doc = SvgDocument.load(SAMPLES / "sample.svg")
+        before = doc.count()
+        uid = doc.add_element(
+            "rect", {"x": 1, "y": 2, "width": 3, "height": 4, "fill": "#ffffff"}
+        )
+        assert doc.count() == before + 1
+        assert doc.tag(uid) == "rect"
+        assert doc.element(uid).get("width") == "3"
+
+    def test_ensure_id_is_stable(self):
+        doc = SvgDocument.load(SAMPLES / "sample.svg")
+        first = doc.ensure_id(1, prefix="node")
+        second = doc.ensure_id(1, prefix="node")
+        assert first == second
+        # Existing ids are reused untouched.
+        assert doc.ensure_id(0) == "frame"
+
+    def test_add_edge_references_and_marker(self):
+        doc = SvgDocument.load(SAMPLES / "sample.svg")
+        from_id = doc.ensure_id(1)
+        to_id = doc.ensure_id(2)
+        uid = doc.add_edge(from_id, to_id, 0, 0, 10, 10)
+        elem = doc.element(uid)
+        assert elem.get("data-edge-from") == from_id
+        assert elem.get("data-edge-to") == to_id
+        assert "cihuang-arrow" in (elem.get("marker-end") or "")
+        defs = [c for c in doc.root if local_name(c.tag) == "defs"]
+        assert defs and any(
+            local_name(c.tag) == "marker" and c.get("id") == "cihuang-arrow" for c in defs[0]
+        )
+
+    def test_arrow_marker_is_idempotent(self):
+        doc = SvgDocument.load(SAMPLES / "sample.svg")
+        doc.ensure_arrow_marker()
+        doc.ensure_arrow_marker()
+        defs = [c for c in doc.root if local_name(c.tag) == "defs"][0]
+        markers = [c for c in defs if local_name(c.tag) == "marker"]
+        assert len(markers) == 1
 
 
 class TestClusterBoxes:

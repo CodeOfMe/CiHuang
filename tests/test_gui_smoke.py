@@ -134,3 +134,33 @@ class TestGuiSmoke:
         window.load(str(FIGURE))
         made = window.canvas.smart_group()
         assert made >= 1
+
+    def test_draw_rectangle(self, window):
+        canvas = window.canvas
+        before = canvas.doc.count()
+        canvas.set_tool("rect")
+        canvas._finish_creation(canvas._user_to_scene(20, 20), canvas._user_to_scene(80, 60))
+        assert canvas.doc.count() == before + 1
+        assert canvas.doc.tag(canvas.selection[0]) == "rect"
+        # The tool snaps back to Select after one shape.
+        assert canvas.tool == "select"
+
+    def test_draw_arrow_has_marker(self, window):
+        canvas = window.canvas
+        canvas.set_tool("arrow")
+        canvas._finish_creation(canvas._user_to_scene(10, 10), canvas._user_to_scene(90, 40))
+        uid = canvas.selection[0]
+        assert canvas.doc.tag(uid) == "line"
+        assert "cihuang-arrow" in (canvas.doc.element(uid).get("marker-end") or "")
+
+    def test_connector_follows_node(self, window):
+        canvas = window.canvas
+        from_id = canvas.doc.ensure_id(1)
+        to_id = canvas.doc.ensure_id(2)
+        edge = canvas.doc.add_edge(from_id, to_id, 0, 0, 10, 10)
+        canvas.rebuild()
+        before = (canvas.doc.element(edge).get("x1"), canvas.doc.element(edge).get("x2"))
+        canvas.doc.translate(1, 30, 0, base=canvas.doc.element(1).get("transform"))
+        canvas.rebuild()
+        after = (canvas.doc.element(edge).get("x1"), canvas.doc.element(edge).get("x2"))
+        assert before != after

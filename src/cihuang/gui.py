@@ -17,13 +17,14 @@ elements.
 from __future__ import annotations
 
 import copy
+import math
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 try:
-    from PySide6.QtCore import QByteArray, QPointF, QRectF, Qt, QTimer, Signal
-    from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPen
+    from PySide6.QtCore import QByteArray, QLineF, QPointF, QRectF, Qt, QTimer, Signal
+    from PySide6.QtGui import QAction, QActionGroup, QColor, QImage, QPainter, QPen
     from PySide6.QtSvg import QSvgRenderer
     from PySide6.QtSvgWidgets import QGraphicsSvgItem
     from PySide6.QtWidgets import (
@@ -34,6 +35,7 @@ try:
         QDoubleSpinBox,
         QFileDialog,
         QFormLayout,
+        QGraphicsLineItem,
         QGraphicsRectItem,
         QGraphicsScene,
         QGraphicsView,
@@ -55,7 +57,13 @@ try:
 except ImportError:  # pragma: no cover - exercised only without PySide6
     PYSIDE_AVAILABLE = False
 
-from .core import SvgDocument, cluster_boxes, collect_drawables, format_number
+from .core import (
+    ARROW_MARKER_ID,
+    SvgDocument,
+    cluster_boxes,
+    collect_drawables,
+    format_number,
+)
 
 HIT_SCALE = 900  # cap (px) for the raster used in pixel hit-testing
 ZOOM_STEP = 1.08  # per wheel notch; gentle so the drawing is easy to keep in view
@@ -63,12 +71,31 @@ ZOOM_OUT_LIMIT = 0.25  # cannot zoom out past 25% of the fitted size
 ZOOM_IN_LIMIT = 40.0  # cannot zoom in past 40x the fitted size
 SMART_GROUP_GAP = 0.06  # cluster gap as a fraction of the viewBox diagonal
 
+# Tools: "select" otherwise the name of the shape being drawn.
+TOOL_SELECT = "select"
+SHAPE_TOOLS = ("rect", "ellipse", "line", "arrow", "text", "connect")
+DEFAULT_SHAPE = {"rect": (90.0, 60.0), "ellipse": (90.0, 60.0)}
+
+
+def _clip_to_box(cx: float, cy: float, tx: float, ty: float, half_w: float, half_h: float):
+    """Point where the ray from a box centre toward (tx, ty) leaves the box."""
+    dx, dy = tx - cx, ty - cy
+    if dx == 0 and dy == 0:
+        return cx, cy
+    scale = float("inf")
+    if dx:
+        scale = min(scale, half_w / abs(dx))
+    if dy:
+        scale = min(scale, half_h / abs(dy))
+    return cx + dx * scale, cy + dy * scale
+
 
 class SvgCanvas(QGraphicsView):
     """The drawing surface: renders the document and handles select/drag."""
 
     selectionChanged = Signal()
     documentChanged = Signal()
+    toolChanged = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -76,6 +103,7 @@ class SvgCanvas(QGraphicsView):
         self.selection: list[int] = []
         self.select_whole_group = True
         self.ignore_background = True
+        self.tool = TOOL_SELECT
         self._fit_scale = 1.0
 
         self._renderer = QSvgRenderer()
@@ -104,6 +132,27 @@ class SvgCanvas(QGraphicsView):
         self._marquee.setZValue(999)
         self._marquee.setVisible(False)
         self._scene.addItem(self._marquee)
+
+        preview_pen = QPen(QColor("#cc3366"), 0)
+        preview_pen.setCosmetic(True)
+        preview_pen.setStyle(Qt.DashLine)
+        self._preview_rect = QGraphicsRectItem()
+        self._preview_rect.setPen(preview_pen)
+        self._preview_rect.setBrush(QColor(204, 51, 102, 30))
+        self._preview_rect.setZValue(998)
+        self._preview_rect.setVisible(False)
+        self._scene.addItem(self._preview_rect)
+        preview_line_pen = QPen(QColor("#cc3366"), 0)
+        preview_line_pen.setCosmetic(True)
+        self._preview_line = QGraphicsLineItem()
+        self._preview_line.setPen(preview_line_pen)
+        self._preview_line.setZValue(998)
+        self._preview_line.setVisible(False)
+        self._scene.addItem(self._preview_line)
+
+        self._creating = False
+        self._create_origin = QPointF()
+        self._connect_start = -1
 
         self._drag_origin = QPointF()
         self._drag_base: dict[int, str] = {}
@@ -172,7 +221,56 @@ class SvgCanvas(QGraphicsView):
         self._scene.setSceneRect(unit_rect)
         self._masks.clear()
         self._bounds.clear()
+        if self._update_edges():
+            data, _ = self._prepared()
+            self._renderer.load(data)
+            self._svg_item.setSharedRenderer(self._renderer)
+            self._svg_item.update()
         self._update_highlights()
+
+    def _update_edges(self) -> bool:
+        """Re-route every connector from its endpoints' current bounds.
+
+        Returns True when something moved, so the caller reloads the renderer.
+        """
+        if self.doc is None:
+            return False
+        id_to_uid = {ident: uid for uid, ident in enumerate(self._uid_to_id)}
+        changed = False
+        for uid in range(self.doc.count()):
+            elem = self.doc.element(uid)
+            from_id = elem.get("data-edge-from")
+            to_id = elem.get("data-edge-to")
+            if not from_id or not to_id:
+                continue
+            from_uid = id_to_uid.get(from_id)
+            to_uid = id_to_uid.get(to_id)
+            if from_uid is None or to_uid is None:
+                continue
+            from_box = self.bounds_scene(from_uid)
+            to_box = self.bounds_scene(to_uid)
+            if from_box.isNull() or to_box.isNull():
+                continue
+            fc, tc = from_box.center(), to_box.center()
+            sx1, sy1 = _clip_to_box(
+                fc.x(), fc.y(), tc.x(), tc.y(), from_box.width() / 2, from_box.height() / 2
+            )
+            sx2, sy2 = _clip_to_box(
+                tc.x(), tc.y(), fc.x(), fc.y(), to_box.width() / 2, to_box.height() / 2
+            )
+            a = self._scene_to_user(QPointF(sx1, sy1))
+            b = self._scene_to_user(QPointF(sx2, sy2))
+            for name, value in (
+                ("x1", a.x()),
+                ("y1", a.y()),
+                ("x2", b.x()),
+                ("y2", b.y()),
+            ):
+                text = format_number(value)
+                if elem.get(name) != text:
+                    elem.set(name, text)
+                    changed = True
+        return changed
 
     def refresh(self) -> None:
         selection = list(self.selection)
@@ -328,6 +426,124 @@ class SvgCanvas(QGraphicsView):
             item.setVisible(not rect.isNull())
 
     # ------------------------------------------------------------ interaction
+    def set_tool(self, tool: str) -> None:
+        self.tool = tool
+        if tool == TOOL_SELECT:
+            self.unsetCursor()
+        else:
+            self.setCursor(Qt.CrossCursor)
+        self.toolChanged.emit()
+
+    def _center_user(self, uid: int) -> QPointF:
+        return self._scene_to_user(self.bounds_scene(uid).center())
+
+    def _after_create(self, uid: int | None) -> None:
+        self.set_tool(TOOL_SELECT)
+        if uid is None:
+            return
+        self.rebuild()
+        self.set_selection([uid])
+        self.documentChanged.emit()
+
+    def _finish_text(self, scene_pos: QPointF) -> None:
+        if self.doc is None:
+            return
+        point = self._scene_to_user(scene_pos)
+        uid = self.doc.add_element(
+            "text",
+            {
+                "x": format_number(point.x()),
+                "y": format_number(point.y()),
+                "font-size": 16,
+                "fill": "#333333",
+            },
+            text="文字",
+        )
+        self._after_create(uid)
+
+    def _finish_creation(self, start: QPointF, end: QPointF) -> None:
+        if self.doc is None:
+            return
+        tool = self.tool
+        start_user = self._scene_to_user(start)
+        end_user = self._scene_to_user(end)
+        distance = math.hypot(end_user.x() - start_user.x(), end_user.y() - start_user.y())
+        uid: int | None = None
+
+        if tool in ("rect", "ellipse"):
+            rect = QRectF(start, end).normalized()
+            if rect.width() < 3 or rect.height() < 3:
+                width, height = DEFAULT_SHAPE.get(tool, (90.0, 60.0))
+                rect = QRectF(start.x() - width / 2, start.y() - height / 2, width, height)
+            x = rect.left() + self._vb_rect.left()
+            y = rect.top() + self._vb_rect.top()
+            common = {"fill": "#c5d8ee", "stroke": "#2c6fbb", "stroke-width": 1.5}
+            if tool == "rect":
+                uid = self.doc.add_element(
+                    "rect",
+                    {
+                        **common,
+                        "x": format_number(x),
+                        "y": format_number(y),
+                        "width": format_number(rect.width()),
+                        "height": format_number(rect.height()),
+                        "rx": 4,
+                    },
+                )
+            else:
+                uid = self.doc.add_element(
+                    "ellipse",
+                    {
+                        **common,
+                        "cx": format_number(x + rect.width() / 2),
+                        "cy": format_number(y + rect.height() / 2),
+                        "rx": format_number(rect.width() / 2),
+                        "ry": format_number(rect.height() / 2),
+                    },
+                )
+        elif tool in ("line", "arrow"):
+            if distance < 2:
+                self._after_create(None)
+                return
+            attrib = {
+                "x1": format_number(start_user.x()),
+                "y1": format_number(start_user.y()),
+                "x2": format_number(end_user.x()),
+                "y2": format_number(end_user.y()),
+                "stroke": "#333333",
+                "stroke-width": 2,
+            }
+            if tool == "arrow":
+                self.doc.ensure_arrow_marker()
+                attrib["marker-end"] = f"url(#{ARROW_MARKER_ID})"
+            uid = self.doc.add_element("line", attrib)
+        elif tool == "connect":
+            target = self.pick_uid(end)
+            if self._connect_start >= 0 and target >= 0 and self._connect_start != target:
+                from_id = self.doc.ensure_id(self._connect_start)
+                to_id = self.doc.ensure_id(target)
+                centre_a = self._center_user(self._connect_start)
+                centre_b = self._center_user(target)
+                uid = self.doc.add_edge(
+                    from_id, to_id, centre_a.x(), centre_a.y(), centre_b.x(), centre_b.y()
+                )
+            elif distance >= 2:
+                self.doc.ensure_arrow_marker()
+                uid = self.doc.add_element(
+                    "line",
+                    {
+                        "x1": format_number(start_user.x()),
+                        "y1": format_number(start_user.y()),
+                        "x2": format_number(end_user.x()),
+                        "y2": format_number(end_user.y()),
+                        "stroke": "#333333",
+                        "stroke-width": 2,
+                        "marker-end": f"url(#{ARROW_MARKER_ID})",
+                    },
+                )
+        self._connect_start = -1
+        self._after_create(uid)
+
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt naming
         if event.button() == Qt.MiddleButton:
             self._pan_origin = event.position()
@@ -337,6 +553,23 @@ class SvgCanvas(QGraphicsView):
             super().mousePressEvent(event)
             return
         scene_pos = self.mapToScene(event.position().toPoint())
+        if self.tool != TOOL_SELECT:
+            self._creating = True
+            self._create_origin = scene_pos
+            if self.tool == "text":
+                self._creating = False
+                self._finish_text(scene_pos)
+            elif self.tool == "connect":
+                self._connect_start = self.pick_uid(scene_pos)
+                self._preview_line.setLine(QLineF(scene_pos, scene_pos))
+                self._preview_line.setVisible(True)
+            elif self.tool in ("rect", "ellipse"):
+                self._preview_rect.setRect(QRectF(scene_pos, scene_pos))
+                self._preview_rect.setVisible(True)
+            else:  # line / arrow
+                self._preview_line.setLine(QLineF(scene_pos, scene_pos))
+                self._preview_line.setVisible(True)
+            return
         uid = self.pick_uid(scene_pos)
         additive = bool(event.modifiers() & Qt.ShiftModifier)
         if uid >= 0:
@@ -380,6 +613,12 @@ class SvgCanvas(QGraphicsView):
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(delta.y()))
             return
         scene_pos = self.mapToScene(event.position().toPoint())
+        if self._creating:
+            if self.tool in ("rect", "ellipse"):
+                self._preview_rect.setRect(QRectF(self._create_origin, scene_pos).normalized())
+            else:
+                self._preview_line.setLine(QLineF(self._create_origin, scene_pos))
+            return
         if self._marquee_origin is not None:
             self._marquee.setRect(QRectF(self._marquee_origin, scene_pos).normalized())
             return
@@ -400,6 +639,12 @@ class SvgCanvas(QGraphicsView):
             self._pan_origin = None
             self.unsetCursor()
         if event.button() == Qt.LeftButton:
+            if self._creating:
+                self._creating = False
+                self._preview_rect.setVisible(False)
+                self._preview_line.setVisible(False)
+                self._finish_creation(self._create_origin, self.mapToScene(event.position().toPoint()))
+                return
             if self._marquee_origin is not None:
                 rect = self._marquee.rect()
                 self._marquee.setVisible(False)
@@ -506,6 +751,7 @@ class MainWindow(QMainWindow):
         self._build_docks()
         self.canvas.selectionChanged.connect(self._on_selection_changed)
         self.canvas.documentChanged.connect(self._refresh_lists)
+        self.canvas.toolChanged.connect(self._sync_tool_actions)
         self.statusBar().showMessage("Open an SVG to begin (Ctrl+O)")
 
     # ------------------------------------------------------------------ setup
@@ -576,6 +822,34 @@ class MainWindow(QMainWindow):
             lambda checked: setattr(self.canvas, "ignore_background", checked)
         )
 
+        # Drawing tools: Select plus the shapes you can add.
+        self.tool_group = QActionGroup(self)
+        self.tool_group.setExclusive(True)
+        self.tool_actions: dict[str, QAction] = {}
+        tool_specs = (
+            ("Select", TOOL_SELECT),
+            ("Rect", "rect"),
+            ("Ellipse", "ellipse"),
+            ("Line", "line"),
+            ("Arrow", "arrow"),
+            ("Text", "text"),
+            ("Connect", "connect"),
+        )
+        for label, tool in tool_specs:
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setData(tool)
+            if tool != TOOL_SELECT:
+                action.setToolTip(f"Draw {label.lower()} (drag on the canvas)")
+            action.triggered.connect(lambda _=False, t=tool: self.canvas.set_tool(t))
+            self.tool_group.addAction(action)
+            self.tool_actions[tool] = action
+        self.tool_actions[TOOL_SELECT].setChecked(True)
+
+        self.act_escape = QAction("Escape", self)
+        self.act_escape.setShortcut("Esc")
+        self.act_escape.triggered.connect(lambda: self.canvas.set_tool(TOOL_SELECT))
+
     def _build_toolbar(self) -> None:
         bar = QToolBar("Main")
         bar.setMovable(False)
@@ -604,6 +878,22 @@ class MainWindow(QMainWindow):
                 bar.addSeparator()
             else:
                 bar.addAction(action)
+
+        self.addToolBarBreak()
+        tools = QToolBar("Tools")
+        tools.setMovable(False)
+        tools.addWidget(QLabel(" Draw: "))
+        for tool in (
+            TOOL_SELECT,
+            "rect",
+            "ellipse",
+            "line",
+            "arrow",
+            "text",
+            "connect",
+        ):
+            tools.addAction(self.tool_actions[tool])
+        self.addToolBar(tools)
 
     def _build_docks(self) -> None:
         self.element_list = QListWidget()
@@ -895,6 +1185,11 @@ class MainWindow(QMainWindow):
         self.act_group.setEnabled(enabled and n > 0)
         self.act_ungroup.setEnabled(enabled and n > 0)
         self.act_select_all.setEnabled(enabled)
+
+    def _sync_tool_actions(self) -> None:
+        action = self.tool_actions.get(self.canvas.tool)
+        if action is not None:
+            action.setChecked(True)
 
     def _refresh_lists(self) -> None:
         self._updating = True

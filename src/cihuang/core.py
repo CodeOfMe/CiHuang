@@ -24,6 +24,9 @@ from pathlib import Path
 SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_NS = "http://www.w3.org/1999/xlink"
 
+# Id of the arrowhead marker CiHuang writes into <defs> for connectors.
+ARROW_MARKER_ID = "cihuang-arrow"
+
 ET.register_namespace("", SVG_NS)
 ET.register_namespace("xlink", XLINK_NS)
 
@@ -443,6 +446,98 @@ class SvgDocument:
     def is_grouped(self, uid: int) -> bool:
         """True when the element sits inside at least one group."""
         return self.top_level_uid(uid) != uid
+
+    # -------------------------------------------------------------- authoring
+    def ensure_id(self, uid: int, prefix: str = "node") -> str:
+        """Return the element's id, creating one if it has none.
+
+        Edges reference their endpoints by id, so the endpoints must carry a
+        stable id that survives rescans.
+        """
+        elem = self.element(uid)
+        ident = elem.get("id")
+        if ident:
+            return ident
+        used = {e.get("id") for e in self.root.iter()} if self.root is not None else set()
+        n = 0
+        while f"cihuang-{prefix}-{n}" in used:
+            n += 1
+        ident = f"cihuang-{prefix}-{n}"
+        elem.set("id", ident)
+        return ident
+
+    def ensure_arrow_marker(self, color: str = "#333333") -> str:
+        """Make sure the arrowhead marker exists in ``<defs>``; return its id."""
+        assert self.root is not None
+        defs = next((c for c in self.root if local_name(c.tag) == "defs"), None)
+        if defs is None:
+            defs = ET.Element(f"{{{SVG_NS}}}defs")
+            self.root.insert(0, defs)
+        for child in defs:
+            if local_name(child.tag) == "marker" and child.get("id") == ARROW_MARKER_ID:
+                return ARROW_MARKER_ID
+        marker = ET.SubElement(defs, f"{{{SVG_NS}}}marker")
+        marker.set("id", ARROW_MARKER_ID)
+        marker.set("viewBox", "0 0 10 10")
+        marker.set("refX", "9")
+        marker.set("refY", "5")
+        marker.set("markerWidth", "7")
+        marker.set("markerHeight", "7")
+        marker.set("orient", "auto-start-reverse")
+        head = ET.SubElement(marker, f"{{{SVG_NS}}}path")
+        head.set("d", "M0,0 L10,5 L0,10 z")
+        head.set("fill", color)
+        return ARROW_MARKER_ID
+
+    def add_element(self, tag: str, attrib: dict | None = None, text: str | None = None) -> int:
+        """Append a new element to the drawing; return its index.
+
+        Appending puts the element on top of the existing stack, which is what a
+        user expects right after they draw something.
+        """
+        assert self.root is not None
+        elem = ET.SubElement(self.root, f"{{{SVG_NS}}}{tag}")
+        for name, value in (attrib or {}).items():
+            elem.set(name, str(value))
+        if text is not None:
+            elem.text = text
+        elem.tail = "\n"
+        self._rescan()
+        self._dirty = True
+        return self._drawables.index(elem)
+
+    def add_edge(
+        self,
+        from_id: str,
+        to_id: str,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        color: str = "#333333",
+        width: float = 2.0,
+    ) -> int:
+        """Add a connector line that remembers ``from_id``/``to_id``.
+
+        The ``data-edge-*`` attributes let the GUI re-route the line whenever an
+        endpoint moves, so edges follow their nodes the way a diagramming tool
+        does.
+        """
+        self.ensure_arrow_marker(color)
+        return self.add_element(
+            "line",
+            {
+                "x1": format_number(x1),
+                "y1": format_number(y1),
+                "x2": format_number(x2),
+                "y2": format_number(y2),
+                "stroke": color,
+                "stroke-width": width,
+                "marker-end": f"url(#{ARROW_MARKER_ID})",
+                "data-edge-from": from_id,
+                "data-edge-to": to_id,
+            },
+        )
 
     def _find_parent(self, target: ET.Element) -> ET.Element | None:
         assert self.root is not None

@@ -22,6 +22,10 @@ Click any single element of an SVG and move it, repaint it, reshape it, or rewri
 - **No accidental backdrop grab** -- a click on a full-canvas background reads as a
   click on empty space; select the backdrop from the element list when you mean to.
 - **Drag to move** -- the move is written as a `translate(...)` on that element only.
+- **Draw new shapes** -- Rect, Ellipse, Line, Arrow and Text tools; pick one and drag
+  on the canvas (a click drops a default-sized shape).
+- **Connect shapes with arrows** -- the Connect tool draws an edge from one shape to
+  another, and the edge follows the shapes when you move them.
 - **Repaint** -- set `fill` and `stroke` with a color picker, or clear them to `none`.
 - **Reshape** -- an editable table exposes every raw attribute (`cx`, `r`, `d`, `points`,
   `transform`, ...), so any geometry can be changed.
@@ -39,6 +43,9 @@ Worth knowing before you rely on it:
 - Editing `<text>` replaces any `<tspan>` children with a single text run.
 - Grouping requires the selected elements to share the same parent; the tool does not
   re-order elements across groups.
+- Connectors are straight lines between shape centres (clipped to the box edges);
+  there is no orthogonal or obstacle-avoiding routing, and you cannot drag an edge's
+  handles.
 - It does not touch `viewBox`, stylesheets inside `<style>`, or animations.
 - `<image>` and `<use>` can be moved and recolored but their referenced content is not
   edited.
@@ -92,6 +99,10 @@ Shift to add to the selection. Middle button pans; the wheel zooms gently and is
 limited so the drawing cannot shrink away. `Ctrl+G` groups the selection,
 `Ctrl+Shift+G` ungroups it and `Ctrl+Alt+G` smart-groups nearby objects. The right
 dock edits fill, stroke, text and raw attributes; the left dock lists every element.
+
+Pick a **Draw** tool to add shapes: drag to size a rect or ellipse, drag a line or
+arrow, click to drop text, or use **Connect** and drag from one shape to another to
+link them with an arrow. `Esc` returns to Select.
 
 ### CLI
 
