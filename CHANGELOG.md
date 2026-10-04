@@ -2,6 +2,14 @@
 
 All notable changes to CiHuang are documented here.
 
+## [0.2.3] - 2026-10-04
+
+- Drawing is now undoable. Rectangles, ellipses, lines, arrows, text and connectors
+  all push an undo snapshot before they change the document, so `Ctrl+Z` removes the
+  shape you just drew (and `Ctrl+Shift+Z` brings it back).
+- Fixed a crash when undoing while a just-drawn element was still selected: the
+  renderer now drops selection indices that no longer exist.
+
 ## [0.2.2] - 2026-10-04
 
 Drawing tools, in the spirit of yEd.

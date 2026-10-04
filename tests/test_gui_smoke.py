@@ -153,6 +153,34 @@ class TestGuiSmoke:
         assert canvas.doc.tag(uid) == "line"
         assert "cihuang-arrow" in (canvas.doc.element(uid).get("marker-end") or "")
 
+    def test_draw_rectangle_is_undoable(self, window):
+        canvas = window.canvas
+        before = canvas.doc.count()
+        canvas.set_tool("rect")
+        canvas._finish_creation(canvas._user_to_scene(20, 20), canvas._user_to_scene(80, 60))
+        assert canvas.doc.count() == before + 1
+        window.undo()
+        assert canvas.doc.count() == before
+
+    def test_draw_text_is_undoable(self, window):
+        canvas = window.canvas
+        before = canvas.doc.count()
+        canvas.set_tool("text")
+        canvas._finish_text(canvas._user_to_scene(30, 30))
+        assert canvas.doc.count() == before + 1
+        window.undo()
+        assert canvas.doc.count() == before
+
+    def test_connector_is_undoable(self, window):
+        canvas = window.canvas
+        before = canvas.doc.count()
+        canvas._connect_start = 1
+        canvas.set_tool("connect")
+        canvas._finish_creation(canvas._center_user(1), canvas._center_user(2))
+        assert canvas.doc.count() == before + 1
+        window.undo()
+        assert canvas.doc.count() == before
+
     def test_connector_follows_node(self, window):
         canvas = window.canvas
         from_id = canvas.doc.ensure_id(1)

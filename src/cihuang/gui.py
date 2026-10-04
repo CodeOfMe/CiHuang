@@ -209,6 +209,8 @@ class SvgCanvas(QGraphicsView):
         """Reload the renderer from the current model."""
         if self.doc is None:
             return
+        # Drop stale indices (undo/redo, delete) before touching the selection.
+        self.selection = [uid for uid in self.selection if 0 <= uid < self.doc.count()]
         data, ids = self._prepared()
         self._uid_to_id = ids
         self._renderer.load(data)
@@ -449,6 +451,7 @@ class SvgCanvas(QGraphicsView):
         if self.doc is None:
             return
         point = self._scene_to_user(scene_pos)
+        self.doc.push_undo()
         uid = self.doc.add_element(
             "text",
             {
@@ -478,6 +481,7 @@ class SvgCanvas(QGraphicsView):
             x = rect.left() + self._vb_rect.left()
             y = rect.top() + self._vb_rect.top()
             common = {"fill": "#c5d8ee", "stroke": "#2c6fbb", "stroke-width": 1.5}
+            self.doc.push_undo()
             if tool == "rect":
                 uid = self.doc.add_element(
                     "rect",
@@ -513,6 +517,7 @@ class SvgCanvas(QGraphicsView):
                 "stroke": "#333333",
                 "stroke-width": 2,
             }
+            self.doc.push_undo()
             if tool == "arrow":
                 self.doc.ensure_arrow_marker()
                 attrib["marker-end"] = f"url(#{ARROW_MARKER_ID})"
@@ -520,6 +525,7 @@ class SvgCanvas(QGraphicsView):
         elif tool == "connect":
             target = self.pick_uid(end)
             if self._connect_start >= 0 and target >= 0 and self._connect_start != target:
+                self.doc.push_undo()
                 from_id = self.doc.ensure_id(self._connect_start)
                 to_id = self.doc.ensure_id(target)
                 centre_a = self._center_user(self._connect_start)
@@ -528,6 +534,7 @@ class SvgCanvas(QGraphicsView):
                     from_id, to_id, centre_a.x(), centre_a.y(), centre_b.x(), centre_b.y()
                 )
             elif distance >= 2:
+                self.doc.push_undo()
                 self.doc.ensure_arrow_marker()
                 uid = self.doc.add_element(
                     "line",
